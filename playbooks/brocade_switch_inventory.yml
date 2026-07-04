@@ -1,22 +1,30 @@
 ---
 # Brocade FOS switch inventory — gathers zoning, chassis, fabric config,
-# and live nameserver (WWN login table) data for one physical switch,
-# looping across all its logical switches (VFIDs).
+# and live nameserver (WWN login table) data for every switch in the AAP
+# inventory, looping across each switch's logical switches (VFIDs).
 #
-# Credentials for ALL switches live in one encrypted vault at
-# group_vars/all/vault.yml, keyed by switch identifier — matches the
-# coe_server_facts convention rather than one vault file per switch.
+# Runs hosts: all so Ansible's own inventory loop covers every switch —
+# no extra_var needed at launch time. fos_ip_addr/fos_user_name/
+# fos_password come from group_vars/all/vars.yml, which looks them up in
+# the encrypted group_vars/all/vault.yml by inventory_hostname — same
+# pattern as coe_server_facts.
 #
-# Run this diagnostic version first against a real switch to capture the
-# actual field names in fibrechannel-name-server output before enabling
-# the POST-to-HiSMOG task at the end.
-- hosts: localhost
+# connection: local is required even though this targets real inventory
+# hosts — the brocade.fos modules call the switch's REST API directly,
+# there's no SSH/Python execution on the switch itself.
+- hosts: all
+  connection: local
   gather_facts: False
   collections:
     - brocade.fos
   vars:
-    credential: "{{ vault_brocade_switches[brocade_switch] }}"
+    credential:
+      fos_ip_addr: "{{ fos_ip_addr }}"
+      fos_user_name: "{{ fos_user_name }}"
+      fos_password: "{{ fos_password }}"
+      https: "{{ fos_https }}"
     validate_certs: false
+    hismog_url: "{{ survey_hismog_url | default('http://192.168.183.110:5000/api/switch_facts') }}"
   tasks:
     - name: Gather facts for all logical switches (VFIDs)
       brocade_list_obj_facts:
@@ -70,21 +78,21 @@
           logical_switch_facts: "{{ logical_switch_facts }}"
 
     # ── Diagnostic dump — inspect this file to confirm real field names
-    # (port-name, port-index, etc.) before wiring up the HiSMOG POST.
+    # (port-name, port-index, etc.) before relying on downstream parsing.
     - name: Dump raw output for field-name inspection
       copy:
         content: "{{ combined_brocade_facts | to_nice_json }}"
-        dest: "/tmp/{{ brocade_switch }}_raw_dump.json"
+        dest: "/tmp/{{ inventory_hostname }}_raw_dump.json"
 
     # ── Uncomment once field names are confirmed against real output —
-    # this POSTs to HiSMOG the same way gather_facts.yml does for hosts.
-    # - name: POST combined facts to HiSMOG dashboard
+    # POSTs per-switch, same push pattern as gather_facts.yml for hosts.
+    # - name: POST combined facts to dashboard
     #   uri:
-    #     url: "{{ hismog_url | default('http://192.168.183.110:5000/api/switch_facts') }}"
+    #     url: "{{ hismog_url }}"
     #     method: POST
     #     body_format: json
     #     body:
-    #       brocade_switch: "{{ brocade_switch }}"
+    #       switch_hostname: "{{ inventory_hostname }}"
     #       combined_brocade_facts: "{{ combined_brocade_facts }}"
     #     status_code: 200
     #   delegate_to: localhost
