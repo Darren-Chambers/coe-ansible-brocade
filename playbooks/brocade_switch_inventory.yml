@@ -3,21 +3,19 @@
 # and live nameserver (WWN login table) data for one physical switch,
 # looping across all its logical switches (VFIDs).
 #
+# Credentials for ALL switches live in one encrypted vault at
+# group_vars/all/vault.yml, keyed by switch identifier — matches the
+# coe_server_facts convention rather than one vault file per switch.
+#
 # Run this diagnostic version first against a real switch to capture the
-# actual field names in fibrechannel-name-server output before building
-# any downstream parser against them.
+# actual field names in fibrechannel-name-server output before enabling
+# the POST-to-HiSMOG task at the end.
 - hosts: localhost
   gather_facts: False
   collections:
     - brocade.fos
-  vars_files:
-    - "../ansible_vault_vars/ansible_vault_brocade_{{ brocade_switch }}.yml"
   vars:
-    credential:
-      fos_ip_addr: "{{ fos_ip_addr }}"
-      fos_user_name: "{{ fos_user_name }}"
-      fos_password: "{{ fos_password }}"
-      https: "{{ fos_https }}"
+    credential: "{{ vault_brocade_switches[brocade_switch] }}"
     validate_certs: false
   tasks:
     - name: Gather facts for all logical switches (VFIDs)
