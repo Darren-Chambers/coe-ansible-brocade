@@ -4,4 +4,4 @@
 fos_ip_addr: "{{ inventory_hostname }}"
 fos_user_name: "{{ vault_switches[inventory_hostname]['fos_user_name'] }}"
 fos_password: "{{ vault_switches[inventory_hostname]['fos_password'] }}"
-fos_https: true
+fos_https: self
