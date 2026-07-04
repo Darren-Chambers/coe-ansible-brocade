@@ -18,6 +18,7 @@
   collections:
     - brocade.fos
   vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
     credential:
       fos_ip_addr: "{{ fos_ip_addr }}"
       fos_user_name: "{{ fos_user_name }}"
