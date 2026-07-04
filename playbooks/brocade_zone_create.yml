@@ -4,9 +4,13 @@
 # Called with extra_vars specifying which switch (via AAP's "limit", same
 # pattern as brocade_switch_inventory.yml — this playbook itself always
 # targets hosts: all, limit restricts execution to one switch), the zone
-# name, its members (a list of WWNs — HiSMOG resolves aliases/WWNs before
-# calling, this playbook just creates what it's told), and the active
+# name, the two aliases it should reference as members, and the active
 # cfg name to add the zone to.
+#
+# Aliases are created first (if they don't already exist — additive, safe
+# to re-run) so the zone references alias NAMES rather than raw WWNs,
+# matching the fabric's own established convention (confirmed against
+# real pre-existing zones on this fabric, which all use aliases).
 #
 # vfid is passed explicitly (not auto-detected) since HiSMOG already knows
 # each switch's VF status from its own inventory — no need to re-detect it
@@ -14,12 +18,15 @@
 # far in this fabric.
 #
 # extra_vars required:
-#   zone_name:   e.g. "Prod-ESXi100-vmhba0__B28_DC1_840130_CL1A"
-#   zone_members: list of two WWNs, e.g.
-#     - "10:00:5c:ba:2c:fd:22:18"
-#     - "50:06:0e:80:28:9c:c2:00"
-#   active_cfg:  e.g. "CoE_FabA" — the zoneset to add the new zone to and enable
+#   zone_name:    e.g. "Prod-ESXi100-vmhba0__B28_DC1_840130_CL1A"
+#   host_alias_name:   e.g. "RHEL1_host2"
+#   host_alias_wwn:    e.g. "10:00:5c:ba:2c:fd:22:18"
+#   target_alias_name: e.g. "B28_DC1_840130_CL1A"
+#   target_alias_wwn:  e.g. "50:06:0e:80:28:9c:c2:00"
+#   active_cfg:   e.g. "CoE_FabA" — the zoneset to add the new zone to and enable
 #   vfid: -1  (optional, defaults to -1)
+#   skip_zone_create: false (optional — true for zones that already exist,
+#     see the "Create the zone" task below)
 - hosts: all
   connection: local
   gather_facts: False
@@ -52,21 +59,40 @@
       debug:
         var: pre_change_zoning
 
-    # ── Create the zone (additive — doesn't touch existing zones/aliases) ──
+    # ── Create aliases (additive — safe to re-run even if they already
+    # exist with the same WWN; only skipped for "defined, not active"
+    # pairs since the zone there already references the correct existing
+    # aliases and doesn't need them touched again). ────────────────────
+    - name: Create host and target aliases
+      when: not (skip_zone_create | default(false) | bool)
+      vars:
+        new_aliases:
+          - name: "{{ host_alias_name }}"
+            members:
+              - "{{ host_alias_wwn }}"
+          - name: "{{ target_alias_name }}"
+            members:
+              - "{{ target_alias_wwn }}"
+      brocade_zoning_alias:
+        credential: "{{ credential }}"
+        vfid: "{{ vfid }}"
+        aliases: "{{ new_aliases }}"
+        members_add_only: True
+      register: alias_create_result
+
+    # ── Create the zone, referencing the aliases above by name ──────────
     # Skipped entirely when the zone already exists (skip_zone_create=true,
     # set by HiSMOG for "defined, not active" pairs) — re-running this
-    # with raw WWN members against a zone that already has alias-based
-    # members ADDS the WWNs as extra members rather than recognising
-    # they're the same devices, since brocade_zoning_zone is additive.
-    # Confirmed by real fallout: a zone ended up with both alias and raw
-    # WWN entries for the same two devices. Only the cfg step below is
-    # needed to activate an already-existing zone.
+    # against a zone that already has correct members would only be a
+    # no-op at best, and there's nothing to add.
     - name: Create the zone
       when: not (skip_zone_create | default(false) | bool)
       vars:
         new_zone:
           - name: "{{ zone_name }}"
-            members: "{{ zone_members }}"
+            members:
+              - "{{ host_alias_name }}"
+              - "{{ target_alias_name }}"
       brocade_zoning_zone:
         credential: "{{ credential }}"
         vfid: "{{ vfid }}"
