@@ -1,0 +1,106 @@
+---
+# Create a single Fibre Channel zone and add it to the active zoneset.
+#
+# Called with extra_vars specifying which switch (via AAP's "limit", same
+# pattern as brocade_switch_inventory.yml — this playbook itself always
+# targets hosts: all, limit restricts execution to one switch), the zone
+# name, its members (a list of WWNs — HiSMOG resolves aliases/WWNs before
+# calling, this playbook just creates what it's told), and the active
+# cfg name to add the zone to.
+#
+# vfid is passed explicitly (not auto-detected) since HiSMOG already knows
+# each switch's VF status from its own inventory — no need to re-detect it
+# here. Defaults to -1 (no VF / AG), matching every switch inventoried so
+# far in this fabric.
+#
+# extra_vars required:
+#   zone_name:   e.g. "Prod-ESXi100-vmhba0__B28_DC1_840130_CL1A"
+#   zone_members: list of two WWNs, e.g.
+#     - "10:00:5c:ba:2c:fd:22:18"
+#     - "50:06:0e:80:28:9c:c2:00"
+#   active_cfg:  e.g. "CoE_FabA" — the zoneset to add the new zone to and enable
+#   vfid: -1  (optional, defaults to -1)
+- hosts: all
+  connection: local
+  gather_facts: False
+  collections:
+    - brocade.fos
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    credential:
+      fos_ip_addr: "{{ fos_ip_addr }}"
+      fos_user_name: "{{ fos_user_name }}"
+      fos_password: "{{ fos_password }}"
+      https: "{{ fos_https }}"
+    vfid: -1
+    hismog_url: "{{ survey_hismog_url | default('http://192.168.183.110:5000/api/switch_facts') }}"
+    post_to_hismog: true
+  tasks:
+    # ── Backup — capture the zoning state immediately before any change.
+    # No routine backups elsewhere; this is the only point a snapshot is
+    # taken, right before the create/enable tasks run, in the same login
+    # session (matches brocade_zoning_zone's own stated behaviour).
+    - name: Capture pre-change zoning snapshot
+      brocade_facts:
+        credential: "{{ credential }}"
+        vfid: "{{ vfid }}"
+        gather_subset:
+          - brocade_zoning
+      register: pre_change_zoning
+
+    - name: Print pre-change zoning snapshot for the record
+      debug:
+        var: pre_change_zoning
+
+    # ── Create the zone (additive — doesn't touch existing zones/aliases) ──
+    - name: Create the zone
+      vars:
+        new_zone:
+          - name: "{{ zone_name }}"
+            members: "{{ zone_members }}"
+      brocade_zoning_zone:
+        credential: "{{ credential }}"
+        vfid: "{{ vfid }}"
+        zones: "{{ new_zone }}"
+        members_add_only: True
+      register: zone_create_result
+
+    # ── Add the new zone to the active cfg and enable it ────────────────
+    - name: Add zone to active configuration and enable
+      vars:
+        new_cfg:
+          - name: "{{ active_cfg }}"
+            members:
+              - "{{ zone_name }}"
+      brocade_zoning_cfg:
+        credential: "{{ credential }}"
+        vfid: "{{ vfid }}"
+        members_add_only: True
+        cfgs: "{{ new_cfg }}"
+        active_cfg: "{{ active_cfg }}"
+      register: cfg_add_result
+
+    # ── Confirm the result — post-change zoning snapshot ────────────────
+    - name: Capture post-change zoning snapshot
+      brocade_facts:
+        credential: "{{ credential }}"
+        vfid: "{{ vfid }}"
+        gather_subset:
+          - brocade_zoning
+      register: post_change_zoning
+
+    - name: POST result back to HiSMOG
+      uri:
+        url: "{{ hismog_url | regex_replace('/switch_facts$', '/zoning_result') }}"
+        method: POST
+        body_format: json
+        body:
+          brocade_switch: "{{ inventory_hostname }}"
+          zone_name: "{{ zone_name }}"
+          active_cfg: "{{ active_cfg }}"
+          success: true
+          pre_change_zoning: "{{ pre_change_zoning.ansible_facts.brocade_zoning if pre_change_zoning.ansible_facts is defined else {} }}"
+          post_change_zoning: "{{ post_change_zoning.ansible_facts.brocade_zoning if post_change_zoning.ansible_facts is defined else {} }}"
+        status_code: 200
+      delegate_to: localhost
+      when: post_to_hismog | bool
