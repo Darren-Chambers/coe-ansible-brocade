@@ -24,28 +24,36 @@
       fos_user_name: "{{ fos_user_name }}"
       fos_password: "{{ fos_password }}"
       https: "{{ fos_https }}"
-    validate_certs: false
     hismog_url: "{{ survey_hismog_url | default('http://192.168.183.110:5000/api/switch_facts') }}"
   tasks:
-    - name: Gather facts for all logical switches (VFIDs)
+    - name: Attempt to gather logical switches (VFIDs) — only works if VF is enabled
       brocade_list_obj_facts:
         credential: "{{ credential }}"
         module_name: "brocade_fibrechannel_logical_switch"
         list_name: "fibrechannel_logical_switch"
       register: logical_switch_facts
+      ignore_errors: yes
 
-    - name: Print all VFIDs
-      debug:
-        msg: >-
+    - name: Determine whether Virtual Fabrics is enabled on this switch
+      set_fact:
+        vf_enabled: "{{ logical_switch_facts is succeeded and logical_switch_facts.ansible_facts is defined and logical_switch_facts.ansible_facts.fibrechannel_logical_switch is defined }}"
+
+    - name: Build the list of VFIDs to iterate — real VFIDs if VF enabled, otherwise just -1
+      set_fact:
+        vfid_list: >-
           {{
-            logical_switch_facts.ansible_facts.fibrechannel_logical_switch
-            | map(attribute='fabric_id') | list
+            (logical_switch_facts.ansible_facts.fibrechannel_logical_switch | map(attribute='fabric_id') | list)
+            if vf_enabled else [-1]
           }}
+
+    - name: Print VFIDs (or -1 for non-VF switches)
+      debug:
+        msg: "vf_enabled={{ vf_enabled }}, vfid_list={{ vfid_list }}"
 
     - name: gather facts
       brocade_facts:
         credential: "{{ credential }}"
-        vfid: "{{ item.fabric_id }}"
+        vfid: "{{ item }}"
         gather_subset:
           - brocade_zoning
           - brocade_chassis_chassis
@@ -53,30 +61,32 @@
           - brocade_fibrechannel_switch
           - brocade_fabric_fabric_switch
           - brocade_interface_fibrechannel
-      loop: "{{ logical_switch_facts.ansible_facts.fibrechannel_logical_switch }}"
+      loop: "{{ vfid_list }}"
       loop_control:
-        label: "VFID {{ item.fabric_id }}"
+        label: "VFID {{ item }}"
       ignore_errors: yes
       register: broc_facts
 
     - name: Get nameserver content
       brocade_list_obj_facts:
         credential: "{{ credential }}"
-        vfid: "{{ item.fabric_id }}"
+        vfid: "{{ item }}"
         module_name: "brocade-name-server"
         list_name: "fibrechannel-name-server"
-      loop: "{{ logical_switch_facts.ansible_facts.fibrechannel_logical_switch }}"
+      loop: "{{ vfid_list }}"
       loop_control:
-        label: "VFID {{ item.fabric_id }}"
+        label: "VFID {{ item }}"
       register: fibrechannel_name_server
       ignore_errors: yes
 
     - name: Combine broc_facts and nameserver facts
       set_fact:
         combined_brocade_facts:
+          vf_enabled: "{{ vf_enabled }}"
+          vfid_list: "{{ vfid_list }}"
           zoning_and_chassis: "{{ broc_facts.results }}"
           fibre_channel_nameserver: "{{ fibrechannel_name_server.results }}"
-          logical_switch_facts: "{{ logical_switch_facts }}"
+          logical_switch_facts: "{{ logical_switch_facts if vf_enabled else omit }}"
 
     # ── Diagnostic dump — inspect this file to confirm real field names
     # (port-name, port-index, etc.) before relying on downstream parsing.

@@ -1,7 +1,7 @@
 # Plaintext — safe to view/diff. Looks up the real secrets from
 # vault.yml by inventory_hostname, same pattern as
 # coe_server_facts/group_vars/all/vars.yml.
-fos_ip_addr: "{{ inventory_hostname }}"
-fos_user_name: "{{ vault_switches[inventory_hostname]['fos_user_name'] }}"
-fos_password: "{{ vault_switches[inventory_hostname]['fos_password'] }}"
-fos_https: self
+fos_ip_addr: "{{ vault_brocade_switches[inventory_hostname]['fos_ip_addr'] }}"
+fos_user_name: "{{ vault_brocade_switches[inventory_hostname]['fos_user_name'] }}"
+fos_password: "{{ vault_brocade_switches[inventory_hostname]['fos_password'] }}"
+fos_https: "{{ vault_brocade_switches[inventory_hostname]['fos_https'] }}"
