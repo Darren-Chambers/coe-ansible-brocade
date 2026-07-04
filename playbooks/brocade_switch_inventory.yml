@@ -25,6 +25,10 @@
       fos_password: "{{ fos_password }}"
       https: "{{ fos_https }}"
     hismog_url: "{{ survey_hismog_url | default('http://192.168.183.110:5000/api/switch_facts') }}"
+    # Set to false via extra_vars to run this playbook standalone (no POST
+    # back to HiSMOG) — e.g. for manual troubleshooting, or override
+    # hismog_url above to point the POST at a different consumer entirely.
+    post_to_hismog: true
   tasks:
     - name: Attempt to gather logical switches (VFIDs) — only works if VF is enabled
       brocade_list_obj_facts:
@@ -88,22 +92,19 @@
           fibre_channel_nameserver: "{{ fibrechannel_name_server.results }}"
           logical_switch_facts: "{{ logical_switch_facts if vf_enabled else omit }}"
 
-    # ── Diagnostic dump — inspect this file to confirm real field names
-    # (port-name, port-index, etc.) before relying on downstream parsing.
-    - name: Dump raw output for field-name inspection
-      copy:
-        content: "{{ combined_brocade_facts | to_nice_json }}"
-        dest: "/tmp/{{ inventory_hostname }}_raw_dump.json"
+    # ── Diagnostic output — still printed to the job log for visibility
+    - name: Print raw output for field-name inspection
+      debug:
+        var: combined_brocade_facts
 
-    # ── Uncomment once field names are confirmed against real output —
-    # POSTs per-switch, same push pattern as gather_facts.yml for hosts.
-    # - name: POST combined facts to dashboard
-    #   uri:
-    #     url: "{{ hismog_url }}"
-    #     method: POST
-    #     body_format: json
-    #     body:
-    #       switch_hostname: "{{ inventory_hostname }}"
-    #       combined_brocade_facts: "{{ combined_brocade_facts }}"
-    #     status_code: 200
-    #   delegate_to: localhost
+    - name: POST combined facts to HiSMOG dashboard
+      uri:
+        url: "{{ hismog_url }}"
+        method: POST
+        body_format: json
+        body:
+          brocade_switch: "{{ inventory_hostname }}"
+          combined_brocade_facts: "{{ combined_brocade_facts }}"
+        status_code: 200
+      delegate_to: localhost
+      when: post_to_hismog | bool
