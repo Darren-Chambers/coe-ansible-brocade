@@ -53,7 +53,16 @@
         var: pre_change_zoning
 
     # ── Create the zone (additive — doesn't touch existing zones/aliases) ──
+    # Skipped entirely when the zone already exists (skip_zone_create=true,
+    # set by HiSMOG for "defined, not active" pairs) — re-running this
+    # with raw WWN members against a zone that already has alias-based
+    # members ADDS the WWNs as extra members rather than recognising
+    # they're the same devices, since brocade_zoning_zone is additive.
+    # Confirmed by real fallout: a zone ended up with both alias and raw
+    # WWN entries for the same two devices. Only the cfg step below is
+    # needed to activate an already-existing zone.
     - name: Create the zone
+      when: not (skip_zone_create | default(false) | bool)
       vars:
         new_zone:
           - name: "{{ zone_name }}"
