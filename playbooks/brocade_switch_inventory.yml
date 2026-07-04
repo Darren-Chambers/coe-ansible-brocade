@@ -1,0 +1,92 @@
+---
+# Brocade FOS switch inventory — gathers zoning, chassis, fabric config,
+# and live nameserver (WWN login table) data for one physical switch,
+# looping across all its logical switches (VFIDs).
+#
+# Run this diagnostic version first against a real switch to capture the
+# actual field names in fibrechannel-name-server output before building
+# any downstream parser against them.
+- hosts: localhost
+  gather_facts: False
+  collections:
+    - brocade.fos
+  vars_files:
+    - "../ansible_vault_vars/ansible_vault_brocade_{{ brocade_switch }}.yml"
+  vars:
+    credential:
+      fos_ip_addr: "{{ fos_ip_addr }}"
+      fos_user_name: "{{ fos_user_name }}"
+      fos_password: "{{ fos_password }}"
+      https: "{{ fos_https }}"
+    validate_certs: false
+  tasks:
+    - name: Gather facts for all logical switches (VFIDs)
+      brocade_list_obj_facts:
+        credential: "{{ credential }}"
+        module_name: "brocade_fibrechannel_logical_switch"
+        list_name: "fibrechannel_logical_switch"
+      register: logical_switch_facts
+
+    - name: Print all VFIDs
+      debug:
+        msg: >-
+          {{
+            logical_switch_facts.ansible_facts.fibrechannel_logical_switch
+            | map(attribute='fabric_id') | list
+          }}
+
+    - name: gather facts
+      brocade_facts:
+        credential: "{{ credential }}"
+        vfid: "{{ item.fabric_id }}"
+        gather_subset:
+          - brocade_zoning
+          - brocade_chassis_chassis
+          - brocade_fibrechannel_configuration_fabric
+          - brocade_fibrechannel_switch
+          - brocade_fabric_fabric_switch
+          - brocade_interface_fibrechannel
+      loop: "{{ logical_switch_facts.ansible_facts.fibrechannel_logical_switch }}"
+      loop_control:
+        label: "VFID {{ item.fabric_id }}"
+      ignore_errors: yes
+      register: broc_facts
+
+    - name: Get nameserver content
+      brocade_list_obj_facts:
+        credential: "{{ credential }}"
+        vfid: "{{ item.fabric_id }}"
+        module_name: "brocade-name-server"
+        list_name: "fibrechannel-name-server"
+      loop: "{{ logical_switch_facts.ansible_facts.fibrechannel_logical_switch }}"
+      loop_control:
+        label: "VFID {{ item.fabric_id }}"
+      register: fibrechannel_name_server
+      ignore_errors: yes
+
+    - name: Combine broc_facts and nameserver facts
+      set_fact:
+        combined_brocade_facts:
+          zoning_and_chassis: "{{ broc_facts.results }}"
+          fibre_channel_nameserver: "{{ fibrechannel_name_server.results }}"
+          logical_switch_facts: "{{ logical_switch_facts }}"
+
+    # ── Diagnostic dump — inspect this file to confirm real field names
+    # (port-name, port-index, etc.) before wiring up the HiSMOG POST.
+    - name: Dump raw output for field-name inspection
+      copy:
+        content: "{{ combined_brocade_facts | to_nice_json }}"
+        dest: "/tmp/{{ brocade_switch }}_raw_dump.json"
+
+    # ── Uncomment once field names are confirmed against real output —
+    # this POSTs to HiSMOG the same way gather_facts.yml does for hosts.
+    # - name: POST combined facts to HiSMOG dashboard
+    #   uri:
+    #     url: "{{ hismog_url | default('http://192.168.183.110:5000/api/switch_facts') }}"
+    #     method: POST
+    #     body_format: json
+    #     body:
+    #       brocade_switch: "{{ brocade_switch }}"
+    #       combined_brocade_facts: "{{ combined_brocade_facts }}"
+    #     status_code: 200
+    #   delegate_to: localhost
