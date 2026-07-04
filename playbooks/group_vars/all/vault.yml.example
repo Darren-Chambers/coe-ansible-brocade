@@ -1,0 +1,25 @@
+# Copy to group_vars/all/vault.yml, fill in real values for every switch
+# in your AAP inventory (keyed by exactly the Name shown in the Hosts
+# tab), then encrypt it:
+#
+#   ansible-vault encrypt group_vars/all/vault.yml
+#
+# fos_https accepts: True (real cert), False (plain HTTP), or "self"
+# (self-signed cert, skips validation) — per-switch, so mixed
+# environments (some with real certs, some self-signed) both work.
+#
+# Do NOT put real hostnames, IPs, or credentials in this .example file —
+# it is committed to version control. Only vault.yml (gitignored, and
+# encrypted before it's ever committed) should contain real values.
+
+vault_brocade_switches:
+  switch-1.example.local:
+    fos_ip_addr: 10.0.0.1
+    fos_user_name: admin
+    fos_password: changeme
+    fos_https: self
+  switch-2.example.local:
+    fos_ip_addr: 10.0.0.2
+    fos_user_name: admin
+    fos_password: changeme
+    fos_https: self
